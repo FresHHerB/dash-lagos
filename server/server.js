@@ -19,23 +19,43 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 // Em produção, USE_DEFAULT_DATA é true por padrão, exceto se explicitamente definido como 'false'
 const USE_DEFAULT_DATA = isBolt ? (process.env.USE_DEFAULT_DATA !== 'false') : (process.env.USE_DEFAULT_DATA === 'true');
 
+// Trust proxy for correct client IP and HTTPS handling
+app.set('trust proxy', 1);
+
 // Lista em memória para armazenar todos os relatórios recebidos
 let recebidos = [];
 
-// Configuração do CORS
-app.use(cors({
-  origin: "*", // Em produção, restrinja aos domínios do seu front-end
-  credentials: true,
-  methods: ["*"],
-  allowedHeaders: ["*"]
-}));
+// CORS configurável via environment
+const allowedOrigins = process.env.CORS_ALLOW_ORIGINS || '*';
+const corsOrigins = allowedOrigins === '*' ? true : allowedOrigins.split(',').map(origin => origin.trim());
 
-// Middleware para trust proxy (importante para HTTPS)
-app.set('trust proxy', true);
+app.use(cors({
+  origin: corsOrigins,
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true
+}));
 
 // Middleware para parsing JSON
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const startTime = Date.now();
+
+  console.log(`📋 ${req.method} ${req.path} - ${req.ip || req.connection.remoteAddress} - ID: ${requestId}`);
+
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    const statusIcon = res.statusCode < 400 ? '✅' : res.statusCode < 500 ? '⚠️' : '❌';
+
+    console.log(`${statusIcon} ${req.method} ${req.path} - ${res.statusCode} - ${duration}ms - ID: ${requestId}`);
+  });
+
+  next();
+});
 
 // Servir arquivos estáticos do build apenas em produção
 if (isBolt) {
@@ -223,47 +243,129 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+// Endpoint raiz com informações da API
+app.get('/', (req, res) => {
+  res.json({
+    service: 'Dashboard Lagos API',
+    version: '1.0.0',
+    status: 'operational',
+    timestamp: new Date().toISOString(),
+    environment: isBolt ? 'production' : 'development',
+    features: {
+      default_data: USE_DEFAULT_DATA,
+      webhook: !!WEBHOOK_URL
+    },
+    endpoints: {
+      reports_get: 'GET /api/relatorios',
+      reports_post: 'POST /api/relatorios',
+      health: 'GET /api/status',
+      clear_reports: 'DELETE /api/relatorios'
+    },
+    documentation: {
+      get_reports: {
+        method: 'GET',
+        path: '/api/relatorios',
+        description: 'Retorna o último relatório armazenado ou dados padrão'
+      },
+      post_report: {
+        method: 'POST',
+        path: '/api/relatorios',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: {
+          reportTitle: 'string (required)',
+          executiveSummary: 'object (required)',
+          performanceAnalysis: 'object (optional)',
+          competitiveAnalysis: 'object (optional)',
+          clientAnalysis: 'object (optional)',
+          productAnalysis: 'object (optional)',
+          strategicInsights: 'object (optional)'
+        }
+      }
+    }
+  });
+});
+
 // SPA fallback apenas em produção
 if (isBolt) {
   app.get('*', (req, res) => {
     const distPath = path.join(__dirname, '../dist');
     const indexPath = path.join(distPath, 'index.html');
-    
+
     if (fs.existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
-      res.status(404).send(`
-        <h1>Frontend não encontrado</h1>
-        <p>Execute 'npm run build' primeiro.</p>
-      `);
+      res.status(404).json({
+        error: 'Frontend não encontrado',
+        message: 'Execute npm run build primeiro.',
+        service: 'Dashboard Lagos API',
+        timestamp: new Date().toISOString()
+      });
     }
   });
 }
 
 // Tratamento de erros global
 app.use((error, req, res, next) => {
-  console.error('Erro não tratado:', error);
+  const errorId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  console.error(`💥 Erro interno - ${req.method} ${req.path} - ${req.ip} - ID: ${errorId}`, {
+    error: error.message,
+    stack: error.stack
+  });
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
   res.status(500).json({
     status: "error",
-    message: "Erro interno do servidor"
+    message: process.env.NODE_ENV === 'development' ? error.message : 'Erro interno do servidor',
+    errorId,
+    timestamp: new Date().toISOString()
   });
 });
 
+// Graceful shutdown function
+const gracefulShutdown = (signal) => {
+  console.log(`📴 Shutdown gracioso iniciado - Signal: ${signal} - Uptime: ${process.uptime().toFixed(2)}s`);
+
+  server.close((err) => {
+    if (err) {
+      console.error(`❌ Erro ao fechar servidor: ${err.message}`);
+      process.exit(1);
+    }
+
+    console.log(`✅ Servidor fechado com sucesso - Uptime: ${process.uptime().toFixed(2)}s`);
+
+    setTimeout(() => {
+      console.warn('⚠️ Forçando shutdown por timeout (30s)');
+      process.exit(1);
+    }, 30000);
+
+    process.exit(0);
+  });
+};
+
 // Função para inicializar o servidor
 async function bootstrap() {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`🚀 Dashboard Lagos API iniciada - Port:${PORT} Env:${process.env.NODE_ENV} PID:${process.pid}`);
   console.log(`📊 USE_DEFAULT_DATA: ${USE_DEFAULT_DATA}`);
   console.log(`🔗 WEBHOOK_URL: ${WEBHOOK_URL || 'Não configurado'}`);
 
   if (isBolt) {
     const domain = process.env.HOST || 'lagos.automear.com';
     console.log(`\n🌐 PRODUÇÃO: Endpoints públicos:`);
+    console.log(`   GET  https://${domain}/`);
     console.log(`   POST https://${domain}/api/relatorios`);
     console.log(`   GET  https://${domain}/api/relatorios`);
     console.log(`   GET  https://${domain}/api/status`);
     console.log(`   DELETE https://${domain}/api/relatorios`);
+    console.log(`\n🎯 Dashboard: https://${domain}/`);
   } else {
     console.log(`📡 Endpoints locais:`);
+    console.log(`   GET  http://localhost:${PORT}/`);
     console.log(`   POST http://localhost:${PORT}/api/relatorios`);
     console.log(`   GET  http://localhost:${PORT}/api/relatorios`);
     console.log(`   GET  http://localhost:${PORT}/api/status`);
@@ -274,17 +376,26 @@ async function bootstrap() {
 }
 
 // Iniciar o servidor
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   bootstrap();
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('🛑 Servidor sendo encerrado...');
-  process.exit(0);
+// Process event handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+process.on('uncaughtException', (error) => {
+  console.error(`💥 Exceção não tratada - PID:${process.pid} - ${error.message}`);
+  console.debug('Stack trace:', { stack: error.stack });
+  process.exit(1);
 });
 
-process.on('SIGINT', () => {
-  console.log('🛑 Servidor sendo encerrado...');
-  process.exit(0);
+process.on('unhandledRejection', (reason, promise) => {
+  const errorMsg = reason instanceof Error ? reason.message : String(reason);
+  console.error(`💥 Promise rejeitada - PID:${process.pid} - ${errorMsg}`);
+  console.debug('Promise details:', {
+    stack: reason instanceof Error ? reason.stack : 'N/A',
+    promise: promise.toString()
+  });
+  process.exit(1);
 });
