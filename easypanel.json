@@ -19,6 +19,14 @@
     {
       "key": "BOLT_DEPLOYMENT",
       "value": "true"
+    },
+    {
+      "key": "USE_DEFAULT_DATA",
+      "value": "true"
+    },
+    {
+      "key": "HOST",
+      "value": "lagos.automear.com"
     }
   ],
   "volumes": [],

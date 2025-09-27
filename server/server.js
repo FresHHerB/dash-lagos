@@ -16,7 +16,7 @@ const isBolt = Boolean(process.env.BOLT_DEPLOYMENT || process.env.NODE_ENV === '
 
 // Configuração de webhook (se definido no .env)
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const USE_DEFAULT_DATA = process.env.USE_DEFAULT_DATA === 'true';
+const USE_DEFAULT_DATA = process.env.USE_DEFAULT_DATA !== 'false'; // Padrão é true em produção
 
 // Lista em memória para armazenar todos os relatórios recebidos
 let recebidos = [];
@@ -29,9 +29,23 @@ app.use(cors({
   allowedHeaders: ["*"]
 }));
 
+// Middleware para trust proxy (importante para HTTPS)
+app.set('trust proxy', true);
+
 // Middleware para parsing JSON
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Middleware para forçar HTTPS em produção (se necessário)
+if (isBolt) {
+  app.use((req, res, next) => {
+    if (req.header('x-forwarded-proto') !== 'https') {
+      res.redirect(`https://${req.header('host')}${req.url}`);
+    } else {
+      next();
+    }
+  });
+}
 
 // Servir arquivos estáticos do build apenas em produção
 if (isBolt) {
@@ -248,15 +262,21 @@ app.use((error, req, res, next) => {
 // Função para inicializar o servidor
 async function bootstrap() {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
-  console.log(`📡 Endpoints locais:`);
-  console.log(`   POST http://localhost:${PORT}/api/teste`);
-  console.log(`   GET  http://localhost:${PORT}/api/relatorios`);
-  console.log(`   GET  http://localhost:${PORT}/api/status`);
-  console.log(`   DELETE http://localhost:${PORT}/api/relatorios`);
-  
+  console.log(`📊 USE_DEFAULT_DATA: ${USE_DEFAULT_DATA}`);
+  console.log(`🔗 WEBHOOK_URL: ${WEBHOOK_URL || 'Não configurado'}`);
+
   if (isBolt) {
-    console.log(`\n🌐 PRODUÇÃO: Endpoints públicos serão expostos pelo Bolt`);
+    console.log(`\n🌐 PRODUÇÃO: Endpoints públicos:`);
+    console.log(`   POST https://${process.env.HOST || 'your-domain'}/api/relatorios`);
+    console.log(`   GET  https://${process.env.HOST || 'your-domain'}/api/relatorios`);
+    console.log(`   GET  https://${process.env.HOST || 'your-domain'}/api/status`);
+    console.log(`   DELETE https://${process.env.HOST || 'your-domain'}/api/relatorios`);
   } else {
+    console.log(`📡 Endpoints locais:`);
+    console.log(`   POST http://localhost:${PORT}/api/relatorios`);
+    console.log(`   GET  http://localhost:${PORT}/api/relatorios`);
+    console.log(`   GET  http://localhost:${PORT}/api/status`);
+    console.log(`   DELETE http://localhost:${PORT}/api/relatorios`);
     console.log(`\n🎯 DESENVOLVIMENTO: Frontend rodando no Vite (porta 5173)`);
     console.log(`   Dashboard: http://localhost:5173`);
   }
