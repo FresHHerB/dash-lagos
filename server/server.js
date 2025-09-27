@@ -16,7 +16,8 @@ const isBolt = Boolean(process.env.BOLT_DEPLOYMENT || process.env.NODE_ENV === '
 
 // Configuração de webhook (se definido no .env)
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const USE_DEFAULT_DATA = process.env.USE_DEFAULT_DATA !== 'false'; // Padrão é true em produção
+// Em produção, USE_DEFAULT_DATA é true por padrão, exceto se explicitamente definido como 'false'
+const USE_DEFAULT_DATA = isBolt ? (process.env.USE_DEFAULT_DATA !== 'false') : (process.env.USE_DEFAULT_DATA === 'true');
 
 // Lista em memória para armazenar todos os relatórios recebidos
 let recebidos = [];
@@ -35,17 +36,6 @@ app.set('trust proxy', true);
 // Middleware para parsing JSON
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// Middleware para forçar HTTPS em produção (se necessário)
-if (isBolt) {
-  app.use((req, res, next) => {
-    if (req.header('x-forwarded-proto') !== 'https') {
-      res.redirect(`https://${req.header('host')}${req.url}`);
-    } else {
-      next();
-    }
-  });
-}
 
 // Servir arquivos estáticos do build apenas em produção
 if (isBolt) {
@@ -266,11 +256,12 @@ async function bootstrap() {
   console.log(`🔗 WEBHOOK_URL: ${WEBHOOK_URL || 'Não configurado'}`);
 
   if (isBolt) {
+    const domain = process.env.HOST || 'lagos.automear.com';
     console.log(`\n🌐 PRODUÇÃO: Endpoints públicos:`);
-    console.log(`   POST https://${process.env.HOST || 'your-domain'}/api/relatorios`);
-    console.log(`   GET  https://${process.env.HOST || 'your-domain'}/api/relatorios`);
-    console.log(`   GET  https://${process.env.HOST || 'your-domain'}/api/status`);
-    console.log(`   DELETE https://${process.env.HOST || 'your-domain'}/api/relatorios`);
+    console.log(`   POST https://${domain}/api/relatorios`);
+    console.log(`   GET  https://${domain}/api/relatorios`);
+    console.log(`   GET  https://${domain}/api/status`);
+    console.log(`   DELETE https://${domain}/api/relatorios`);
   } else {
     console.log(`📡 Endpoints locais:`);
     console.log(`   POST http://localhost:${PORT}/api/relatorios`);
