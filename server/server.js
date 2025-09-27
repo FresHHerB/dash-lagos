@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { defaultReportData } from './default-data.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +13,10 @@ const PORT = process.env.PORT || 8001;
 
 // Detectar se está rodando no Bolt/produção
 const isBolt = Boolean(process.env.BOLT_DEPLOYMENT || process.env.NODE_ENV === 'production');
+
+// Configuração de webhook (se definido no .env)
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+const USE_DEFAULT_DATA = process.env.USE_DEFAULT_DATA === 'true';
 
 // Lista em memória para armazenar todos os relatórios recebidos
 let recebidos = [];
@@ -39,55 +44,136 @@ if (isBolt) {
 
 // API Routes primeiro
 /**
- * Ingestão de JSON via POST.
+ * POST /api/relatorios - Recebe novos relatórios
  */
-app.post('/api/teste', async (req, res) => {
+app.post('/api/relatorios', async (req, res) => {
   try {
     let data = req.body;
-    
+
+    // Se recebermos um array, pegamos o primeiro item
     if (Array.isArray(data) && data.length > 0) {
       data = data[0];
     }
 
+    // Validação básica da estrutura NewReportData
+    if (!data || typeof data !== 'object') {
+      return res.status(400).json({
+        status: "error",
+        message: "Dados inválidos. Esperado um objeto com estrutura de relatório."
+      });
+    }
+
+    // Verificar se tem campos obrigatórios básicos
+    if (!data.reportTitle || !data.executiveSummary) {
+      return res.status(400).json({
+        status: "error",
+        message: "Dados incompletos. Campos obrigatórios: reportTitle, executiveSummary"
+      });
+    }
+
+    // Adicionar timestamp
+    data.receivedAt = new Date().toISOString();
+
     recebidos.push(data);
-    console.log('Dados recebidos:', JSON.stringify(data, null, 2));
+    console.log('📊 Relatório recebido:', data.reportTitle || 'Sem título');
+
+    // Enviar webhook se configurado
+    if (WEBHOOK_URL) {
+      try {
+        console.log('🔗 Enviando webhook para:', WEBHOOK_URL);
+        await fetch(WEBHOOK_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            event: 'new_report_received',
+            data: data,
+            timestamp: new Date().toISOString(),
+            server_info: {
+              total_reports: recebidos.length,
+              server_url: isBolt ? `https://${req.get('host')}` : `http://localhost:${PORT}`
+            }
+          })
+        });
+        console.log('✅ Webhook enviado com sucesso');
+      } catch (webhookError) {
+        console.error('❌ Erro ao enviar webhook:', webhookError.message);
+        // Não falha a requisição se o webhook falhar
+      }
+    }
 
     res.json({
       status: "success",
-      message: "Dados recebidos e armazenados!",
+      message: "Relatório recebido e armazenado com sucesso!",
       dados_recebidos: data,
+      total_relatorios: recebidos.length,
+      webhook_sent: !!WEBHOOK_URL
     });
   } catch (error) {
-    console.error('Erro ao processar dados:', error);
+    console.error('❌ Erro ao processar relatório:', error);
     res.status(500).json({
-      status: "error", 
+      status: "error",
       message: error.message
     });
   }
 });
 
 /**
- * Retorna a lista de relatórios já recebidos.
+ * POST /api/teste - Mantido para compatibilidade (redireciona para /api/relatorios)
+ */
+app.post('/api/teste', async (req, res) => {
+  console.log('⚠️  Endpoint /api/teste está deprecated. Use /api/relatorios');
+
+  // Redirecionar para o novo endpoint
+  req.url = '/api/relatorios';
+  app._router.handle(req, res);
+});
+
+/**
+ * GET /api/relatorios - Retorna a lista de relatórios armazenados
  */
 app.get('/api/relatorios', (req, res) => {
   try {
-    console.log(`Retornando ${recebidos.length} relatórios armazenados`);
-    
+    console.log(`📋 Retornando ${recebidos.length} relatórios armazenados`);
+
     // Sanitiza os dados para evitar problemas de serialização JSON
-    const sanitizedData = recebidos.map(item => {
+    const sanitizedData = recebidos.map((item, index) => {
       try {
         // Tenta serializar cada item individualmente
         JSON.stringify(item);
-        return item;
+        return {
+          ...item,
+          id: index + 1, // Adiciona ID sequencial
+          retrievedAt: new Date().toISOString() // Timestamp da consulta
+        };
       } catch (error) {
-        console.warn('Item com problema de serialização removido:', error.message);
+        console.warn('⚠️  Item com problema de serialização removido:', error.message);
         return null;
       }
     }).filter(item => item !== null);
-    
-    res.json(sanitizedData);
+
+    // Retorna o último relatório se existe, ou dados padrão
+    const response = sanitizedData.length > 0 ? sanitizedData[sanitizedData.length - 1] : null;
+
+    if (response) {
+      console.log(`✅ Retornando relatório: ${response.reportTitle || 'Sem título'}`);
+      res.json(response);
+    } else if (USE_DEFAULT_DATA) {
+      console.log('📋 Retornando dados padrão (nenhum relatório recebido ainda)');
+      res.json({
+        ...defaultReportData,
+        id: 0,
+        receivedAt: new Date().toISOString(),
+        retrievedAt: new Date().toISOString(),
+        isDefaultData: true
+      });
+    } else {
+      console.log('📭 Nenhum relatório encontrado');
+      res.json([]);
+    }
   } catch (error) {
-    console.error('Erro ao retornar relatórios:', error);
+    console.error('❌ Erro ao retornar relatórios:', error);
     res.status(500).json({
       status: "error",
       message: "Erro ao processar relatórios armazenados",
