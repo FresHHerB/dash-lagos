@@ -1,0 +1,35 @@
+{
+  "name": "dash-lagos",
+  "description": "Dashboard para Lagos - Sistema de monitoramento e relatórios",
+  "type": "app",
+  "framework": "react",
+  "buildCommand": "npm run build",
+  "startCommand": "node server/server.js",
+  "installCommand": "npm install",
+  "port": 8001,
+  "environment": [
+    {
+      "key": "NODE_ENV",
+      "value": "production"
+    },
+    {
+      "key": "PORT",
+      "value": "8001"
+    },
+    {
+      "key": "BOLT_DEPLOYMENT",
+      "value": "true"
+    }
+  ],
+  "volumes": [],
+  "domains": [],
+  "healthCheck": {
+    "path": "/api/status",
+    "port": 8001,
+    "interval": 30
+  },
+  "resources": {
+    "memory": "512Mi",
+    "cpu": "0.5"
+  }
+}
