@@ -15,7 +15,7 @@ import { AlertTriangle } from 'lucide-react';
 
 function App() {
   const [activeTab, setActiveTab] = useState<string>('resumo');
-  const [apiUrl, setApiUrl] = useState<string>('https://0f55f04d7bb2.ngrok-free.app/api/relatorios');
+  const [apiUrl, setApiUrl] = useState<string>('https://lagos.automear.com/api/relatorios');
   const [showConfig, setShowConfig] = useState(false);
 
   const { data: report, rawApiData, loading, error, lastUpdated, refresh } = useNewReportData(apiUrl);
